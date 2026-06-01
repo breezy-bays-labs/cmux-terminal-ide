@@ -1,0 +1,96 @@
+#!/bin/sh
+# cwd-route <path> — open a file or dir in the right place. TYPE-GATED on ws_type
+# (S5's marker): a `general` workspace defers EVERY open to the user's normal helix
+# opener (open-helix.sh) — the model-open routing is a dbt-workspace-only extra.
+# In a `dbt` workspace:
+#   *.sql -> helix model tab in the edit pane (+ buffer the sibling yml), focus-if-open
+#   *.csv -> csvlens tab in the tools pane
+#   dir   -> one helix tab buffering the dir's files
+#   *     -> the user's open-helix.sh (a non-model file is not the dbt model-open extra)
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+
+WS="$(ws_ref)"; [ -n "$WS" ] || { echo "cwd-route: no workspace" >&2; exit 1; }
+arg="${1:?usage: cwd-route <path>}"
+
+# The user's normal helix opener — used for general-ws files AND dbt non-model
+# files. Prefers the explicit path / the dotfiles ~/.config/yazi/open-helix.sh
+# (slice S8); falls back to a PATH `open-helix.sh`, then the tool's own helix.
+open_helix() {  # <file>
+  _oh="${DBT_WS_OPEN_HELIX:-$HOME/.config/yazi/open-helix.sh}"
+  if [ -x "$_oh" ]; then "$_oh" "$1"
+  elif command -v open-helix.sh >/dev/null 2>&1; then open-helix.sh "$1"
+  else "$DBT_WS_BIN/hx-wrap" "$1"; fi
+}
+
+# Type gate: a `general` workspace (no S5 marker) defers ALL opens to open-helix.sh,
+# BEFORE requiring the edit_pane state a general ws doesn't have.
+if [ "$(ws_type)" != "dbt" ]; then
+  open_helix "$arg"
+  echo "opened via open-helix.sh: $(basename "$arg")"
+  exit 0
+fi
+
+EDIT="$(state_get edit_pane)"
+TOOLS="$(state_get tools_pane)"
+[ -n "$EDIT" ] || { echo "cwd-route: no edit_pane state for $(ws_key)" >&2; exit 1; }
+
+# Spawn a fresh terminal surface in <pane>, run a command string, title the tab.
+open_in_pane() { # <pane> <title> <cmdline>
+  _pane="$1"; _title="$2"; _cmd="$3"
+  cmux new-surface --type terminal --pane "$_pane" --workspace "$WS" --focus true >/dev/null 2>&1
+  _sf="$(cmux list-pane-surfaces --pane "$_pane" --workspace "$WS" 2>/dev/null | grep -oE 'surface:[0-9]+' | sort -t: -k2 -n | tail -1)"
+  [ -n "$_sf" ] || { echo "cwd-route: no surface in $_pane" >&2; return 1; }
+  cmux send       --surface "$_sf" --workspace "$WS" "$_cmd"  >/dev/null 2>&1
+  cmux send-key   --surface "$_sf" --workspace "$WS" Return   >/dev/null 2>&1
+  cmux rename-tab --surface "$_sf" --workspace "$WS" "$_title" >/dev/null 2>&1
+}
+
+# Focus an existing "hx: <title>" tab in the edit pane; 0 if one was found.
+focus_existing() { # <tab-title>
+  _ex="$(cmux tree --workspace "$WS" 2>/dev/null | grep "\"$1\"" | grep -oE 'surface:[0-9]+' | head -1 || true)"
+  [ -n "$_ex" ] || return 1
+  cmux move-surface --surface "$_ex" --pane "$EDIT" --focus true --workspace "$WS" >/dev/null 2>&1 \
+    || cmux focus-pane --pane "$EDIT" --workspace "$WS" >/dev/null 2>&1 || true
+  return 0
+}
+
+route_sql() {
+  _sql="$1"; _model="$(basename "$_sql" .sql)"
+  if focus_existing "hx: $_model"; then echo "focused hx: $_model"; return 0; fi
+  _yml="$(fd -e yml -e yaml . "$(dirname "$_sql")" --max-depth 1 2>/dev/null | head -1 || true)"
+  if [ -n "$_yml" ]; then
+    open_in_pane "$EDIT" "hx: $_model" "$DBT_WS_BIN/hx-wrap '$_sql' '$_yml'"
+  else
+    open_in_pane "$EDIT" "hx: $_model" "$DBT_WS_BIN/hx-wrap '$_sql'"
+  fi
+  echo "opened hx: $_model"
+}
+
+route_csv() {
+  _f="$1"
+  [ -n "$TOOLS" ] || { echo "cwd-route: no tools_pane state" >&2; return 1; }
+  open_in_pane "$TOOLS" "csv: $(basename "$_f")" "csvlens '$_f'"
+  echo "opened csv: $_f"
+}
+
+route_dir() {
+  _d="$1"; _base="$(basename "$_d")"
+  # Glob expands in the target surface's shell (single-quote the dir, /* outside).
+  open_in_pane "$EDIT" "hx: $_base/" "$DBT_WS_BIN/hx-wrap '$_d'/*"
+  echo "opened dir: $_base/"
+}
+
+if [ -d "$arg" ]; then
+  route_dir "$arg"
+else
+  case "$arg" in
+    *.sql) route_sql "$arg" ;;
+    *.csv) route_csv "$arg" ;;
+    *)     open_helix "$arg"; echo "opened via open-helix.sh: $(basename "$arg")" ;;
+  esac
+fi

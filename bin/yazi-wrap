@@ -1,0 +1,25 @@
+#!/bin/sh
+# yazi-wrap — launch yazi with the right config home + a stable numeric client-id
+# so external tools can drive it (ya emit-to <id> reveal/cd). The client-id (NOT
+# $YAZI_ID, which is only for yazi's own subshells) is what external control routes to.
+#
+# Config home is the F-8 TYPE GATE: a `dbt` workspace uses config/yazi/dbt (the
+# model-open opener + the user's keymap/theme); any other workspace uses the machine
+# profile's variant (the "untouched" path). Selection keys on ws_type, NOT the profile.
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+if [ "$(ws_type)" = "dbt" ]; then
+  _ov="${DBT_WS_DBT_YAZI:-$HOME/.local/share/cmux-workspace-dbt/yazi-dbt}"
+  if [ -d "$_ov" ]; then
+    export YAZI_CONFIG_HOME="$_ov"                  # installed overlay (bundled cfg + user keymap/theme)
+  else
+    export YAZI_CONFIG_HOME="$DBT_WS_XDG/yazi/dbt"  # uninstalled fallback: the bundled config
+  fi
+else
+  export YAZI_CONFIG_HOME="$DBT_WS_XDG/yazi/$YAZI_CONFIG_VARIANT"
+fi
+exec yazi --client-id "$(yazi_id)" "$@"

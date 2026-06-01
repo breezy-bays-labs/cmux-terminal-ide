@@ -1,0 +1,14 @@
+# Synthetic test profiles.yml — case (iii) active target `prod` is snowflake (no
+# `path:`). Also re-confirms active-target selection (prod chosen over dev).
+jaffle_shop:
+  target: prod
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb
+    prod:
+      type: snowflake
+      account: xy12345.us-east-1
+      database: analytics
+      warehouse: COMPUTE_WH
+      schema: public

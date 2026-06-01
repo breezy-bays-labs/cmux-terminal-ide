@@ -1,0 +1,14 @@
+#!/bin/sh
+# git-glance [repo] — live working-tree status readout (watchexec-driven).
+# A static glance for now; becomes a selectable widget routing through cwd-route later.
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+REPO="${1:-$PWD}"
+R="$DBT_WS_HOME/bin/git-glance-render"
+"$R" "$REPO"
+if command -v watchexec >/dev/null 2>&1; then
+  exec watchexec -c -q -w "$REPO" --debounce 400ms -- "$R" "$REPO"
+fi
+while :; do clear; "$R" "$REPO"; sleep 2; done

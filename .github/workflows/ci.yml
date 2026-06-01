@@ -1,0 +1,28 @@
+# .github/workflows/ci.yml — mechanical quality gate for cmux-workspace-dbt.
+#
+# MIRROR: lefthook.yml `pre-push` runs the IDENTICAL two commands (the shellcheck
+# glob, then the stub suite). Keep the two files in lockstep — any change to the
+# lint glob, the runner, or the suite command MUST touch BOTH atomically
+# (lefthook ↔ CI mirror-drift rule).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # macOS-only tool: the stub suite has darwin assumptions (e.g. `getconf
+    # DARWIN_USER_TEMP_DIR` in `darwin_tmp`). An ubuntu runner would false-fail.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure shellcheck is available
+        run: command -v shellcheck >/dev/null 2>&1 || brew install shellcheck
+      - name: shellcheck (executable scripts + sourced lib)
+        run: shellcheck bin/* lib/*.sh install.sh tests/*.sh
+      - name: stub-cmux suite
+        run: sh tests/run.sh

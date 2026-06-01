@@ -1,0 +1,10 @@
+#!/bin/sh
+# stub duckdb — the reachability probe succeeds; the information_schema lookup returns
+# $STUB_DUCKDB_FQN (empty by default → "not a relation").
+printf 'duckdb %s\n' "$*" >> "${DWS_TEST_LOG:-/dev/null}"
+case "$*" in
+  *"select 1"*)         exit 0 ;;
+  *information_schema*) printf '%s\n' "${STUB_DUCKDB_FQN:-}" ;;
+  *)                    : ;;
+esac
+exit 0

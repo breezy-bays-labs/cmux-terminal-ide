@@ -1,0 +1,239 @@
+#!/bin/sh
+# cwd — entry dispatcher for the dbt workspace tool (Phase 0: POSIX scripts).
+#   cwd focus [--hq] <model|seed|path>   point the whole workspace at one model
+#   cwd route <path>                     open a file/dir in the right pane
+#   cwd doctor                           print resolved profile, toggles, state, tools
+#   cwd state migrate <old-key> [--yes]  re-key a Phase-0 ref-keyed state dir -> live UUID
+#   cwd new <worktree-path|branch>       launch a dbt cmux workspace pointed at a worktree
+#   cwd register dbt                     (run inside a new ws) write the UUID-keyed dbt marker
+#   cwd resume <…>                       Phase 1 — re-attach to an existing workspace (not yet)
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+
+usage() {
+  cat <<EOF
+cwd — dbt workspace tool (profile: $DBT_WS_PROFILE)
+usage:
+  cwd focus [--hq] <model|seed|path>   point the whole workspace at one model
+  cwd route <path>                     open a file/dir in the right pane
+  cwd doctor                           print resolved profile, toggles, state, tools
+  cwd state migrate <old-key> [--yes]  re-key a Phase-0 ref-keyed state dir -> live UUID
+  cwd new <worktree-path|branch>       launch a dbt cmux workspace pointed at a worktree
+  cwd register dbt                     (inside a new ws) write the UUID-keyed dbt marker
+  cwd resume <…>                       (Phase 1 — not yet)
+EOF
+}
+
+have() { if command -v "$1" >/dev/null 2>&1; then echo yes; else echo no; fi; }
+
+doctor() {
+  _hq=no; if hq_enabled; then _hq=yes; fi
+  echo "cwd doctor"
+  echo "  machine profile  $DBT_WS_PROFILE   (axis 1: config regime)"
+  echo "  home             $DBT_WS_HOME"
+  echo "  config_regime    $CONFIG_REGIME"
+  echo "  shell_kind       $SHELL_KIND  (prompt glyph '${PROMPT_GLYPH}')"
+  echo "  yazi variant     $YAZI_CONFIG_VARIANT  ($DBT_WS_XDG/yazi/$YAZI_CONFIG_VARIANT)"
+  echo "  data axis:       (axis 3: independent of the machine profile)"
+  echo "    warehouse      $WAREHOUSE"
+  echo "    harlequin      $HARLEQUIN"
+  echo "    sql_query_mode $SQL_QUERY_MODE"
+  echo "    profiles_dir   $DBT_PROFILES_DIR"
+  echo "    hq_enabled     $_hq"
+  echo "  summary          profile=$DBT_WS_PROFILE ws_type=$(ws_type) warehouse=$WAREHOUSE harlequin=$HARLEQUIN hq_enabled=$_hq profiles_dir=$DBT_PROFILES_DIR"
+  _curkey="$(ws_key)"
+  _sdir="$DBT_WS_STATE/$_curkey"
+  _sexists=no; [ -d "$_sdir" ] && _sexists=yes
+  echo "  workspace ref    $(ws_ref)"
+  echo "  workspace key    $_curkey"
+  echo "  ws_type          $(ws_type)   (dbt = launcher-created marker; general = default)"
+  echo "  state dir        $_sdir  (exists: $_sexists)"
+  echo "  edit_pane        $(state_get edit_pane '(unset)')"
+  echo "  tools_pane       $(state_get tools_pane '(unset)')"
+  # Surface any OTHER state dirs (the F2 ref/uuid mismatch). A ref-keyed Phase-0
+  # dir here means this workspace's pane refs may live under the wrong key — the
+  # hardened doctor refuses to look "healthy" while a stray dir exists, so the
+  # earlier circular self-test can't pass on a fake ref again.
+  _others=""
+  if [ -d "$DBT_WS_STATE" ]; then
+    for _d in "$DBT_WS_STATE"/*; do
+      [ -d "$_d" ] || continue
+      _ob="$(basename "$_d")"
+      [ "$_ob" = "$_curkey" ] && continue
+      _others="$_others $_ob"
+    done
+  fi
+  if [ -n "$_others" ]; then
+    echo "  other state dirs$_others"
+    echo "                   ^ NOT the live key — if one holds this workspace's pane refs:"
+    echo "                     cwd state migrate <old-key>"
+  fi
+  echo "  dbt_dir          $(dbt_dir)   (axis 2: dbt project)"
+  echo "  duckdb           $(duckdb_path)"
+  echo "  tools            hx=$(have hx) yazi=$(have yazi) fd=$(have fd) fzf=$(have fzf) duckdb=$(have duckdb) harlequin=$(have harlequin) hunk=$(have hunk) csvlens=$(have csvlens) dbtf=$(have dbtf) cmux=$(have cmux)"
+}
+
+# state migrate <old-key> [--yes] — one-shot, collision-refusing re-key of a
+# Phase-0 ref-keyed state dir to the live $CMUX_WORKSPACE_ID (UUID) key. Two-phase
+# (scan, then commit) so it is ALL-OR-NOTHING: any conflicting key aborts the whole
+# migration with nothing moved. Idempotent: after success the source dir is gone, so
+# a 2nd run is a safe no-op. The one-time LIVE cutover (against the real
+# workspace_12) is a runbook step — see README; nothing here is skipped/ignored.
+state_migrate() {
+  _yes=0; _old=""
+  for _a in "$@"; do
+    case "$_a" in
+      --yes|-y) _yes=1 ;;
+      --*)      ;;
+      *)        [ -z "$_old" ] && _old="$_a" ;;
+    esac
+  done
+  _new="$(ws_key)"
+  [ -n "$_new" ] || { echo "cwd state migrate: no live workspace (set CMUX_WORKSPACE_ID)" >&2; return 1; }
+  if [ -z "$_old" ]; then
+    echo "cwd state migrate: need the old ref-keyed dir name (see 'cwd doctor' -> other state dirs)" >&2
+    echo "usage: cwd state migrate <old-key> [--yes]" >&2
+    return 64
+  fi
+  if [ "$_old" = "$_new" ]; then
+    echo "cwd state migrate: source == target ('$_new') — already UUID-keyed, nothing to do."
+    return 0
+  fi
+  _src="$DBT_WS_STATE/$_old"; _dst="$DBT_WS_STATE/$_new"
+  [ -d "$_src" ] || { echo "cwd state migrate: nothing to migrate (no $_src)."; return 0; }
+
+  echo "cwd state migrate"
+  echo "  from   $_src   (old, ref-keyed)"
+  echo "  to     $_dst   (live uuid: $(ws_ref))"
+  if [ "$_yes" -ne 1 ]; then
+    printf '  re-key these pane refs to the live workspace? [y/N] '
+    read -r _ans || _ans=n
+    case "$_ans" in y|Y|yes|YES) ;; *) echo "  aborted."; return 1 ;; esac
+  fi
+
+  # phase 1 — SCAN (mutate nothing): classify every source file against the target
+  mkdir -p "$_dst"
+  _collide=""
+  for _f in "$_src"/*; do
+    [ -e "$_f" ] || continue
+    _n="$(basename "$_f")"
+    if [ -e "$_dst/$_n" ] && ! cmp -s "$_f" "$_dst/$_n"; then
+      _collide="$_collide $_n"
+    fi
+  done
+  if [ -n "$_collide" ]; then
+    echo "  REFUSED — conflicting keys already exist under the live workspace." >&2
+    echo "  The old (ref-keyed) value is authoritative; keep it unless you know otherwise." >&2
+    for _n in $_collide; do
+      echo "    $_n: old='$(cat "$_src/$_n")'  current='$(cat "$_dst/$_n")'" >&2
+    done
+    echo "  Resolve by hand, then re-run. Source left intact: $_src" >&2
+    return 3
+  fi
+
+  # phase 2 — COMMIT (only with zero collisions): move absent files, then remove
+  # the source ENTIRELY (identical-skips already live in the target, so no loss).
+  for _f in "$_src"/*; do
+    [ -e "$_f" ] || continue
+    _n="$(basename "$_f")"
+    [ -e "$_dst/$_n" ] || mv "$_f" "$_dst/$_n"
+  done
+  rm -rf "$_src"
+  echo "  migrated -> $_dst ; removed $_src"
+  return 0
+}
+
+# The dbt-workspace layout — a STATIC cmux layout JSON (same schema as cmux.json).
+# It carries NO interpolation: the worktree path rides on `--cwd` (a separate,
+# quoted flag), so a path with spaces/quotes can't break the JSON. Panes:
+#   left   yazi tree (yazi-wrap — the profile/ws_type-selected config)
+#   right  helix editor (hx-wrap) over a dbt-shell pane whose surfaces are
+#          `cwd doctor` (startup sanity) + `cwd register dbt` (writes the
+#          UUID-keyed marker from inside the new workspace — see S5).
+dbt_layout() {
+  printf '%s' '{"direction":"horizontal","split":0.22,"children":[{"pane":{"surfaces":[{"type":"terminal","command":"yazi-wrap"}]}},{"direction":"vertical","split":0.78,"children":[{"pane":{"surfaces":[{"type":"terminal","command":"hx-wrap"}]}},{"pane":{"surfaces":[{"type":"terminal","command":"cwd doctor"},{"type":"terminal","command":"cwd register dbt"}]}}]}]}'
+}
+
+# cwd new <worktree-path|branch> — birth a dbt cmux workspace pointed at a worktree.
+cwd_new() {
+  _target="${1:-}"
+  [ -n "$_target" ] || { echo "usage: cwd new <worktree-path|branch>" >&2; return 64; }
+  if [ -d "$_target" ]; then
+    _wt="$_target"
+  else
+    git worktree add "$_target" >/dev/null 2>&1 \
+      || git worktree add -b "$(basename "$_target")" "$_target" >/dev/null 2>&1 \
+      || { echo "cwd new: could not create a worktree at '$_target'" >&2; return 1; }
+    _wt="$_target"
+  fi
+  _wt_abs="$(cd "$_wt" 2>/dev/null && pwd)" || _wt_abs="$_wt"
+  _ref="$(cmux new-workspace --cwd "$_wt_abs" --name "dbt: $(basename "$_wt")" \
+            --layout "$(dbt_layout)" --focus true 2>/dev/null \
+          | sed -n 's/^OK \(workspace:[0-9][0-9]*\).*/\1/p' | head -1)"
+  [ -n "$_ref" ] || { echo "cwd new: cmux new-workspace returned no workspace ref" >&2; return 1; }
+  echo "cwd new: created $_ref  (dbt workspace, cwd: $_wt_abs)"
+  echo "  layout: yazi tree · helix · dbt-shell + a 'cwd register dbt' surface (writes the UUID marker)"
+  printf '%s\n' "$_ref"
+}
+
+# parse a `cmux tree` (on stdin) -> the pane ref hosting the FIRST surface whose
+# quoted title matches the given ERE.
+_pane_for_title() {  # <title-ere>   (tree text on stdin)
+  awk -v re="$1" '
+    /pane pane:[0-9]/  { if (match($0, /pane:[0-9]+/)) cur = substr($0, RSTART, RLENGTH) }
+    /surface surface:/ {
+      t = $0; sub(/^[^"]*"/, "", t); sub(/".*$/, "", t)
+      if (cur != "" && t ~ re) { print cur; exit }
+    }
+  '
+}
+
+# parse a `cmux tree` (on stdin) -> the LAST pane ref that is NOT <exclude>.
+_last_pane_not() {  # <exclude-pane>   (tree text on stdin)
+  awk -v ex="$1" '
+    /pane pane:[0-9]/ { if (match($0, /pane:[0-9]+/)) { p = substr($0, RSTART, RLENGTH); if (p != ex) last = p } }
+    END { if (last != "") print last }
+  '
+}
+
+# cwd register dbt — runs INSIDE the new workspace (where $CMUX_WORKSPACE_ID is the
+# UUID). Writes the UUID-keyed marker that makes this a `dbt` workspace and records
+# the pane refs the focus/route flows drive. A `general` workspace never runs this —
+# absence of the marker IS general (no heuristic).
+cwd_register() {
+  [ "${1:-}" = "dbt" ] || { echo "usage: cwd register dbt" >&2; return 64; }
+  _ws="$(ws_ref)"
+  [ -n "$_ws" ] || { echo "cwd register: no workspace (set CMUX_WORKSPACE_ID)" >&2; return 1; }
+  _tree="$(cmux tree --workspace "$_ws" 2>/dev/null)"
+  _edit="$(printf '%s\n' "$_tree" | _pane_for_title '^hx')"          # the helix editor pane
+  _tools="$(printf '%s\n' "$_tree" | _last_pane_not "$_edit")"       # the dbt-shell / tools pane
+  state_set ws_type dbt
+  [ -n "$_edit" ]  && state_set edit_pane  "$_edit"
+  [ -n "$_tools" ] && state_set tools_pane "$_tools"
+  echo "cwd register: marked workspace '$_ws' as a dbt workspace"
+  echo "  ws_type=dbt  edit_pane=${_edit:-(unresolved)}  tools_pane=${_tools:-(unresolved)}"
+}
+
+cmd="${1:-}"
+if [ "$#" -gt 0 ]; then shift; fi
+case "$cmd" in
+  focus)   exec "$DBT_WS_BIN/cwd-focus" "$@" ;;
+  route)   exec "$DBT_WS_BIN/cwd-route" "$@" ;;
+  doctor)  doctor ;;
+  new)     cwd_new "$@" ;;
+  register) cwd_register "$@" ;;
+  state)
+    _sub="${1:-}"; if [ "$#" -gt 0 ]; then shift; fi
+    case "$_sub" in
+      migrate) state_migrate "$@" ;;
+      *) echo "cwd state: unknown subcommand '$_sub' (try: migrate)" >&2; exit 64 ;;
+    esac
+    ;;
+  resume) echo "cwd resume: Phase 1 (re-attach to an existing dbt workspace) — not built yet." >&2; exit 64 ;;
+  ""|-h|--help|help) usage ;;
+  *) echo "cwd: unknown command '$cmd'" >&2; usage; exit 64 ;;
+esac

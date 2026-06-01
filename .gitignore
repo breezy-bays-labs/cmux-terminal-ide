@@ -1,0 +1,10 @@
+# Per-workspace runtime state ($CMUX_WORKSPACE_ID-keyed); never committed.
+state/
+
+# Local overrides + macOS cruft
+*.local
+.DS_Store
+err.tmp
+
+# Session scaffolding (pipeline focus notes etc.); never committed to the public repo
+.claude/

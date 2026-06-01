@@ -1,0 +1,93 @@
+#!/bin/sh
+# cwd-focus [--hq] <model|seed|path> — point the WHOLE workspace at one model/seed.
+#   editor : helix (.sql) / csvlens (.csv)   via cwd-route
+#   yazi   : reveal the file in the tree      (ya DDS emit-to, real macOS TMPDIR)
+#   hunk   : drive the live review session to this file's diff (if changed)
+#   sql    : read-only harlequin preview — data-axis gated (harlequin=on + warehouse=duckdb)
+#   report : DAG focus wires here once cute-dbt emits the explorer page
+# No arg -> fzf-pick.
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+
+WS="$(ws_ref)"; [ -n "$WS" ] || { echo "cwd-focus: no workspace" >&2; exit 1; }
+DBT="$(dbt_dir)"
+DUCKDB="$(duckdb_path)"
+YID="$(yazi_id)"
+REPO="$(git -C "$DBT" rev-parse --show-toplevel 2>/dev/null || echo "$DBT")"
+RT="$(darwin_tmp)"
+
+HQ=0; arg=""
+for a in "$@"; do
+  case "$a" in
+    --hq) HQ=1 ;;
+    --*)  ;;
+    *)    [ -z "$arg" ] && arg="$a" ;;
+  esac
+done
+
+if [ -z "$arg" ]; then
+  target="$(fd -e sql -e csv . "$DBT/models" "$DBT/seeds" 2>/dev/null | fzf --prompt='focus> ' --preview 'bat -n --color=always {}')" || exit 0
+elif [ -f "$arg" ]; then
+  target="$arg"
+else
+  target="$(fd "^${arg}\.(sql|csv)$" "$DBT/models" "$DBT/seeds" 2>/dev/null | head -1)"
+fi
+[ -n "${target:-}" ] || { echo "not found: $arg" >&2; exit 1; }
+name="$(basename "$target")"; ext="${name##*.}"; name="${name%.*}"
+rel="${target#"$REPO"/}"
+echo "focus → $name (.$ext)  [profile: $DBT_WS_PROFILE]"
+
+# 1) editor / viewer — through the shared router
+if "$DBT_WS_BIN/cwd-route" "$target" >/dev/null 2>&1; then
+  echo "  editor   ✓  $ext: $name"
+else
+  echo "  editor   –"
+fi
+
+# 2) yazi — reveal in the tree (real macOS TMPDIR so ya reaches the DDS socket)
+if TMPDIR="$RT" ya emit-to "$YID" reveal "$target" 2>/dev/null; then
+  echo "  yazi     ✓  $(basename "$(dirname "$target")")/$name.$ext"
+else
+  echo "  yazi     –  (DDS $YID unreachable)"
+fi
+
+# 3) hunk — drive the live review session to this file's diff, IF it has changes
+changed=0
+git -C "$REPO" diff --quiet -- "$rel"          2>/dev/null || changed=1
+git -C "$REPO" diff --cached --quiet -- "$rel"  2>/dev/null || changed=1
+if [ "$changed" = 1 ]; then
+  if hunk session reload   --repo "$REPO" -- diff -- "$rel"      >/dev/null 2>&1 \
+  && hunk session navigate --repo "$REPO" --file "$rel" --hunk 1 >/dev/null 2>&1; then
+    echo "  hunk     ✓  diff: $rel"
+  else
+    echo "  hunk     –  (no live hunk session for $(basename "$REPO"))"
+  fi
+else
+  echo "  hunk     ·  (no changes in $name)"
+fi
+
+# 4) harlequin — data-axis gated. Only when hq_enabled (harlequin=on + warehouse=duckdb),
+#    independent of the machine profile. A `bare` install also lacks the binary (structural).
+if hq_enabled; then
+  fqn="$(duckdb -readonly "$DUCKDB" -noheader -list \
+    -c "select table_schema||'.'||table_name from information_schema.tables where table_name='$name' limit 1" 2>/dev/null || true)"
+  if [ -n "$fqn" ]; then
+    "$DBT_WS_BIN/hq-preview" "$fqn" >/dev/null 2>&1 && echo "  hq       ✓  preview: $fqn" || echo "  hq       –"
+  elif [ "$HQ" = 1 ]; then
+    "$DBT_WS_BIN/hq-preview" "$name" >/dev/null 2>&1 && echo "  hq       ✓  preview: $name (forced)" || echo "  hq       –  (forced; duckdb unreadable)"
+  elif duckdb -readonly "$DUCKDB" -c "select 1" >/dev/null 2>&1; then
+    echo "  hq       ·  ($name not a relation in duckdb)"
+  else
+    echo "  hq       –  (duckdb locked read-write — run the main harlequin with --read-only)"
+  fi
+else
+  echo "  sql      ·  query mode = $SQL_QUERY_MODE (no warehouse TUI — data axis: harlequin=$HARLEQUIN warehouse=$WAREHOUSE)"
+fi
+
+# 5) report / DAG — same mechanism, pending a model-DAG page:
+#    cmux browser --surface <dag> eval "window.focusModel('$name')"
+echo "  report   ·  DAG focus wires here once cute-dbt emits the explorer page"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# hx-wrap — launch helix with the workspace's bundled XDG config (dbt-fusion LSP on
+# sql). Shell-agnostic: sets XDG_CONFIG_HOME via this POSIX wrapper rather than an
+# inline VAR=val (nushell can't do that).
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+export XDG_CONFIG_HOME="$DBT_WS_XDG"
+exec hx "$@"

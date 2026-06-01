@@ -1,0 +1,12 @@
+# lefthook.yml — local pre-push gate for cmux-workspace-dbt.
+#
+# MIRROR: .github/workflows/ci.yml `gate` job runs the IDENTICAL two commands.
+# Keep the two files in lockstep — any change to the lint glob or the suite
+# command MUST touch BOTH atomically (lefthook ↔ CI mirror-drift rule).
+pre-push:
+  parallel: false
+  commands:
+    shellcheck:
+      run: shellcheck bin/* lib/*.sh install.sh tests/*.sh
+    stub-suite:
+      run: sh tests/run.sh

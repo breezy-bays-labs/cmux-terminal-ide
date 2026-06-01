@@ -1,0 +1,10 @@
+#!/bin/sh
+# stub git — enough for cwd-focus: report a repo root and a clean/dirty working tree.
+printf 'git %s\n' "$*" >> "${DWS_TEST_LOG:-/dev/null}"
+if [ "${1:-}" = "-C" ]; then shift 2; fi
+case "${1:-}" in
+  rev-parse) printf '%s\n' "${DWS_FIXTURES:-$PWD}" ;;   # --show-toplevel
+  diff)      exit "${STUB_GIT_DIRTY:-0}" ;;             # 0 = clean (no changes)
+  *)         : ;;
+esac
+exit 0

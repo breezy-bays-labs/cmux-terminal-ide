@@ -1,0 +1,12 @@
+# Workspace helix config — dbt-fusion LSP on SQL. `dbtf` is the EXPLICIT fusion
+# binary (never bare `dbt`, so a teammate's venv dbt-core is never shadowed). The
+# installer guarantees a real `dbtf` executable on PATH (helix spawns via execvp,
+# not a shell alias).
+[language-server.dbt-fusion]
+command = "dbtf"
+args = ["lsp"]
+
+[[language]]
+name = "sql"
+language-servers = ["dbt-fusion"]
+auto-format = false

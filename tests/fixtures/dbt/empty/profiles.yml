@@ -1,0 +1,9 @@
+# Synthetic test profiles.yml — case (iv): does NOT define the `jaffle_shop`
+# profile the dbt_project.yml asks for, so the derive must degrade to `none`
+# without erroring.
+some_other_project:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: elsewhere.duckdb

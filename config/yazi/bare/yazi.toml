@@ -1,0 +1,13 @@
+# yazi config — `bare` variant. Default column layout (team box, VSCode may stay
+# primary). Single dispatcher; no warehouse-query surface referenced in the bare
+# config set (structural absence of the warehouse-query surface).
+[mgr]
+show_hidden = true
+
+[opener]
+route = [{ run = 'cwd-route %s', block = false, desc = "route -> cwd", for = "macos" }]
+
+[open]
+prepend_rules = [
+  { url = "*", use = "route" },
+]

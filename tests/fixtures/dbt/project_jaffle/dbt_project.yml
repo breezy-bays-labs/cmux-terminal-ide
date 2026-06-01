@@ -1,0 +1,10 @@
+name: 'jaffle_shop'
+version: '1.0.0'
+config-version: 2
+
+# Synthetic test fixture — points at the `jaffle_shop` profile in profiles.yml.
+profile: 'jaffle_shop'
+
+models:
+  jaffle_shop:
+    +materialized: view

@@ -1,0 +1,14 @@
+# Synthetic test profiles.yml — case (i) multi-target (active `dev` must win over
+# `prod`) + case (ii) quoted, RELATIVE duckdb path (resolved vs. the project dir).
+jaffle_shop:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: 'analytics/dev.duckdb'
+      threads: 4
+    prod:
+      type: snowflake
+      account: xy12345.us-east-1
+      database: analytics
+      warehouse: COMPUTE_WH

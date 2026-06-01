@@ -1,0 +1,11 @@
+#!/bin/sh
+# stub fd — resolves fixture paths. yml lookups return the schema (unless STUB_FD_YML=0);
+# a model/seed name query returns its fixture file.
+printf 'fd %s\n' "$*" >> "${DWS_TEST_LOG:-/dev/null}"
+case " $* " in
+  *" -e yml "*|*" -e yaml "*) [ "${STUB_FD_YML:-1}" = 1 ] && printf '%s\n' "$DWS_FIXTURES/models/marts/schema.yml" ;;
+  *dim_customers*)              printf '%s\n' "$DWS_FIXTURES/models/marts/dim_customers.sql" ;;
+  *orders*)              printf '%s\n' "$DWS_FIXTURES/seeds/orders.csv" ;;
+  *) : ;;
+esac
+exit 0

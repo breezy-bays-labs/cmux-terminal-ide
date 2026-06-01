@@ -1,0 +1,14 @@
+# yazi config — `stow` variant. Single-column tree (ratio [0,1,0]) for a narrow
+# tree pane. All files route through the one dispatcher; yazi's [open] match key is
+# `url` (not `name`), and `%s` is the all-paths placeholder.
+[mgr]
+show_hidden = true
+ratio = [0, 1, 0]
+
+[opener]
+route = [{ run = 'cwd-route %s', block = false, desc = "route -> cwd", for = "macos" }]
+
+[open]
+prepend_rules = [
+  { url = "*", use = "route" },
+]

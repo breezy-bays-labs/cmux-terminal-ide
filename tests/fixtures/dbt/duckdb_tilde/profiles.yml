@@ -1,0 +1,7 @@
+# Synthetic test profiles.yml — duckdb with a `~`-prefixed (home-relative) path.
+jaffle_shop:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ~/warehouse/dev.duckdb

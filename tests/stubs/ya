@@ -1,0 +1,4 @@
+#!/bin/sh
+# stub ya — yazi DDS emit-to succeeds.
+printf 'ya %s\n' "$*" >> "${DWS_TEST_LOG:-/dev/null}"
+exit 0

@@ -1,0 +1,67 @@
+#!/bin/sh
+# hq-preview <table|schema.table> — read-only harlequin DATA PREVIEW tab in the
+# tools pane. Loads `select * from <relation> limit 100` into the editor but does
+# NOT run it (the user runs it with ctrl+enter). Read-only so it never fights dbt's
+# writer lock and coexists with the main harlequin (DuckDB allows many readers).
+#
+# WAREHOUSE-ACCESS BOUNDARY: refuses unless the DATA AXIS enables the interactive
+# warehouse-query channel (HARLEQUIN=on, WAREHOUSE=duckdb). The bare install also
+# omits this symlink entirely — this guard is defense-in-depth.
+set -eu
+self="$0"
+if [ -L "$self" ]; then self="$(readlink "$self")"; fi
+DBT_WS_HOME="${DBT_WS_HOME:-$(cd "$(dirname "$self")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$DBT_WS_HOME/lib/common.sh"
+
+hq_enabled || { echo "hq-preview: disabled (data axis: HARLEQUIN=$HARLEQUIN, WAREHOUSE=$WAREHOUSE)" >&2; exit 3; }
+
+WS="$(ws_ref)"; [ -n "$WS" ] || { echo "hq-preview: no workspace" >&2; exit 1; }
+TOOLS="$(state_get tools_pane)"; [ -n "$TOOLS" ] || { echo "hq-preview: no tools_pane state" >&2; exit 1; }
+DUCKDB="$(duckdb_path)"
+glyph="${PROMPT_GLYPH:-❯}"
+
+rel="${1:?usage: hq-preview <table|schema.table>}"
+case "$rel" in
+  *.*) sch="${rel%.*}"; tbl="${rel##*.}"; from="\"$sch\".\"$tbl\"" ;;
+  *)   tbl="$rel";       from="\"$rel\"" ;;
+esac
+query="select * from $from limit 100"
+
+cmux new-surface --type terminal --pane "$TOOLS" --workspace "$WS" --focus true >/dev/null 2>&1
+sf="$(cmux list-pane-surfaces --pane "$TOOLS" --workspace "$WS" 2>/dev/null | grep -oE 'surface:[0-9]+' | sort -t: -k2 -n | tail -1)"
+[ -n "$sf" ] || { echo "hq-preview: no surface" >&2; exit 1; }
+
+# Wait for the new shell prompt — a slow shell startup races cmux send.
+r=0
+while [ "$r" -lt 40 ]; do
+  cmux read-screen --surface "$sf" --workspace "$WS" 2>/dev/null | grep -q "$glyph" && break
+  r=$((r + 1))
+done
+cmux send       --surface "$sf" --workspace "$WS" "harlequin --read-only '$DUCKDB'" >/dev/null 2>&1
+cmux send-key   --surface "$sf" --workspace "$WS" Return >/dev/null 2>&1
+cmux rename-tab --surface "$sf" --workspace "$WS" "hq: $tbl" >/dev/null 2>&1
+
+# Wait for harlequin's editor to render (read-screen round-trips pace the poll).
+i=0
+while [ "$i" -lt 60 ]; do
+  cmux read-screen --surface "$sf" --workspace "$WS" 2>/dev/null | grep -q "Query Editor" && break
+  i=$((i + 1))
+done
+# Let harlequin (Textual) finish booting + flushing stdin before typing; a too-early
+# send is dropped. read-screen round-trips pace this settle (no sleep).
+s=0
+while [ "$s" -lt 18 ]; do cmux read-screen --surface "$sf" --workspace "$WS" >/dev/null 2>&1; s=$((s + 1)); done
+# Send once; only re-send if the editor is still empty (never overlap-send).
+a=0
+while [ "$a" -lt 3 ]; do
+  cmux send --surface "$sf" --workspace "$WS" "$query" >/dev/null 2>&1
+  v=0
+  while [ "$v" -lt 6 ]; do
+    cmux read-screen --surface "$sf" --workspace "$WS" 2>/dev/null | grep -qF "$tbl" && { v=99; break; }
+    v=$((v + 1))
+  done
+  [ "$v" = 99 ] && break
+  a=$((a + 1))
+done
+echo "hq preview loaded (not run): $rel — $query"

@@ -1,0 +1,53 @@
+#!/bin/sh
+# stub cmux — logs every call to $DWS_TEST_LOG and fakes just enough of the
+# surface/screen model for cwd-route / cwd-focus / hq-preview to run end-to-end
+# without a real cmux. Surfaces are minted on new-surface; `send` accumulates a
+# per-surface screen buffer that `read-screen` plays back (+ a prompt glyph and
+# harlequin's "Query Editor" marker, so the readiness polls terminate).
+: "${DWS_TEST_LOG:?}" ; : "${DWS_STUB_DIR:?}"
+mkdir -p "$DWS_STUB_DIR"
+printf 'cmux %s\n' "$*" >> "$DWS_TEST_LOG"
+
+sub="${1:-}"
+shift 2>/dev/null || true
+
+pane="" ; surface="" ; last="" ; prev=""
+for a in "$@"; do
+  case "$prev" in
+    --pane)    pane="$a" ;;
+    --surface) surface="$a" ;;
+  esac
+  prev="$a" ; last="$a"
+done
+pkey="$(printf '%s' "$pane"    | tr ':/ ' '____')"
+skey="$(printf '%s' "$surface" | tr ':/ ' '____')"
+
+case "$sub" in
+  new-workspace)
+    n="$(cat "$DWS_STUB_DIR/wscounter" 2>/dev/null || echo 0)" ; n=$((n + 1))
+    printf '%s' "$n" > "$DWS_STUB_DIR/wscounter"
+    printf 'OK workspace:%s\n' "$n"     # the ref cwd new captures
+    ;;
+  new-surface)
+    n="$(cat "$DWS_STUB_DIR/counter" 2>/dev/null || echo 0)" ; n=$((n + 1))
+    printf '%s' "$n" > "$DWS_STUB_DIR/counter"
+    printf 'surface:%s\n' "$n" > "$DWS_STUB_DIR/last.$pkey"
+    : > "$DWS_STUB_DIR/screen.surface_$n"
+    ;;
+  list-pane-surfaces)
+    cat "$DWS_STUB_DIR/last.$pkey" 2>/dev/null || true
+    ;;
+  send)
+    printf '%s\n' "$last" >> "$DWS_STUB_DIR/screen.$skey" 2>/dev/null || true
+    ;;
+  read-screen)
+    printf '%s\nQuery Editor\n' "${DWS_TEST_GLYPH:-❯}"
+    cat "$DWS_STUB_DIR/screen.$skey" 2>/dev/null || true
+    ;;
+  tree)
+    cat "${DWS_TEST_TREE:-/dev/null}" 2>/dev/null || true
+    ;;
+  *)
+    : ;;  # send-key, rename-tab, move-surface, focus-pane — logged only
+esac
+exit 0

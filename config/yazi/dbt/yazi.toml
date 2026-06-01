@@ -1,0 +1,16 @@
+# yazi config — `dbt` variant. Used ONLY in a dbt workspace (yazi-wrap selects it
+# by ws_type, not the machine profile). Routes through the TYPE-AWARE cwd-route:
+# in a dbt ws that means .sql -> helix model-open, .csv -> csvlens, else -> the
+# user's open-helix.sh. The user's keymap.toml / theme.toml carry over via symlinks
+# the installer wires for the stow profile (S7).
+[mgr]
+show_hidden = true
+ratio = [0, 1, 0]
+
+[opener]
+route = [{ run = 'cwd-route %s', block = false, desc = "route -> cwd", for = "macos" }]
+
+[open]
+prepend_rules = [
+  { url = "*", use = "route" },
+]

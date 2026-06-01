@@ -1,0 +1,6 @@
+#!/bin/sh
+# stub yazi — prints (and logs) the YAZI_CONFIG_HOME it was launched with, so the
+# F-8 type-gate selection in yazi-wrap is assertable without a real yazi.
+printf 'yazi YAZI_CONFIG_HOME=%s\n' "${YAZI_CONFIG_HOME:-}" >> "${DWS_TEST_LOG:-/dev/null}"
+printf 'YAZI_CONFIG_HOME=%s\n' "${YAZI_CONFIG_HOME:-}"
+exit 0

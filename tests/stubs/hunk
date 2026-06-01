@@ -1,0 +1,4 @@
+#!/bin/sh
+# stub hunk — the live-session calls succeed.
+printf 'hunk %s\n' "$*" >> "${DWS_TEST_LOG:-/dev/null}"
+exit 0
