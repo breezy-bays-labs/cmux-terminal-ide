@@ -244,10 +244,15 @@ cmd_rm() {
   [ -n "$_arg" ] || { echo "usage: cide-space rm <name|id> [-f]" >&2; exit 64; }
   _id="$(_resolve "$_arg")"; [ -n "$_id" ] || { echo "cide-space: no space '$_arg'." >&2; exit 1; }
   _nm="$(_field "$_id" 2)"
-  if [ "$_force" -ne 1 ] && [ -t 0 ]; then
-    printf 'cide-space: remove "%s" (%s)? closes its workspaces and purges record + history. [y/N] ' "$_nm" "$_id"
-    read -r _ans || _ans=""
-    case "$_ans" in y|Y|yes|YES) : ;; *) echo "cide-space: aborted."; return 0 ;; esac
+  if [ "$_force" -ne 1 ]; then
+    if [ -t 0 ]; then
+      printf 'cide-space: remove "%s" (%s)? closes its workspaces and purges record + history. [y/N] ' "$_nm" "$_id"
+      read -r _ans || _ans=""
+      case "$_ans" in y|Y|yes|YES) : ;; *) echo "cide-space: aborted."; return 0 ;; esac
+    else
+      echo "cide-space: refusing to rm '$_nm' in a non-interactive shell without -f (it closes workspaces + purges the record)." >&2
+      exit 1
+    fi
   fi
   _n="$(_close_members "$_id")"
   if [ "$(cide_current_space)" = "$_id" ]; then rm -f "$CIDE_CURRENT_SPACE" 2>/dev/null || true; fi

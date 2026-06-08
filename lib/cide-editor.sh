@@ -228,7 +228,7 @@ cide_space_members() {  # [space-id]
     cmux rpc workspace.list '{}' 2>/dev/null \
       | jq -r --arg sid "$_smid" \
           '(.workspaces // .)[]
-             | select(((.description // "") | [scan("cide:spaces=([^;]*)")] | (.[0] // [""]) | .[0]
+             | select(((.description // "") | [scan("(^|;)cide:spaces=([^;]*)")] | (.[-1] // [""]) | .[-1]
                        | split(",") | index($sid)) != null)
              | .id' 2>/dev/null \
       | tr 'a-f' 'A-F' | sort -u
